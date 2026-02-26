@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import './App.css';
 // --- Firebase & Firestore Imports ---
 import { db, auth, googleProvider } from './firebase'; 
-import { collection, addDoc, getDocs, query, orderBy, deleteDoc, doc } from "firebase/firestore";
+import { collection, addDoc, getDocs, query, orderBy, deleteDoc, doc, getDoc, setDoc, onSnapshot, serverTimestamp } from "firebase/firestore";
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 
 // 1. Define your Admin List here (Replace with your actual email)
@@ -19,6 +19,10 @@ function App() {
   const [jobs, setJobs] = useState([]); 
   const [view, setView] = useState('home'); 
   const [modalView, setModalView] = useState(null); 
+  const [activeConversationId, setActiveConversationId] = useState(null);
+  const [activeChatJob, setActiveChatJob] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
 
   // Determine if the current user has Admin privileges
   const isAdmin = currentUser && ADMIN_UIDS.includes(currentUser.uid);
@@ -57,12 +61,35 @@ function App() {
     }
   }, [view]);
 
+  useEffect(() => {
+    if (modalView !== 'chat' || !activeConversationId) {
+      return;
+    }
+
+    const messagesQuery = query(
+      collection(db, "conversations", activeConversationId, "messages"),
+      orderBy("createdAt", "asc")
+    );
+
+    const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
+      const messages = snapshot.docs.map((messageDoc) => ({
+        id: messageDoc.id,
+        ...messageDoc.data()
+      }));
+      setChatMessages(messages);
+    }, (error) => {
+      console.error("Error loading messages: ", error);
+    });
+
+    return () => unsubscribe();
+  }, [modalView, activeConversationId]);
+
   // --- 3. LOGIC HANDLERS ---
   
   const handleGoogleLogin = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
-      setModalView(null);
+      handleCloseModal();
     } catch (error) {
       console.error("Login Error: ", error);
       alert("Failed to sign in with Google.");
@@ -109,13 +136,103 @@ function App() {
 
     try {
       await addDoc(collection(db, "jobs"), newJob);
-      setModalView(null);
+      handleCloseModal();
       setView('listings');
       fetchJobs(); 
     } catch (error) {
       console.error("Error adding job: ", error);
       alert("Error posting job. Check database rules!");
     }
+  };
+
+  const getConversationId = (jobId, currentUid, ownerUid) => {
+    const sortedUids = [currentUid, ownerUid].sort();
+    return `${jobId}_${sortedUids[0]}_${sortedUids[1]}`;
+  };
+
+  const ensureConversationExists = async (conversationId, job) => {
+    const conversationRef = doc(db, "conversations", conversationId);
+    const existingConversation = await getDoc(conversationRef);
+
+    if (!existingConversation.exists()) {
+      await setDoc(conversationRef, {
+        jobId: job.id,
+        jobTitle: job.title,
+        participants: [currentUser.uid, job.ownerId],
+        participantNames: {
+          [currentUser.uid]: currentUser.displayName || 'User',
+          [job.ownerId]: job.employer || 'Lister'
+        },
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        lastMessage: ''
+      });
+    }
+  };
+
+  const handleOpenChat = async (job) => {
+    if (!currentUser) {
+      setModalView('login');
+      return;
+    }
+
+    if (!job.ownerId) {
+      alert("This listing cannot be messaged yet because it has no owner account linked.");
+      return;
+    }
+
+    if (currentUser.uid === job.ownerId) {
+      alert("This is your listing, so there's no lister to message.");
+      return;
+    }
+
+    try {
+      const conversationId = getConversationId(job.id, currentUser.uid, job.ownerId);
+      await ensureConversationExists(conversationId, job);
+      setActiveChatJob(job);
+      setActiveConversationId(conversationId);
+      setChatInput('');
+      setModalView('chat');
+    } catch (error) {
+      console.error("Error opening chat: ", error);
+      alert("Could not open chat. Check Firestore rules for conversations/messages.");
+    }
+  };
+
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    const messageText = chatInput.trim();
+
+    if (!messageText || !currentUser || !activeConversationId) {
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, "conversations", activeConversationId, "messages"), {
+        text: messageText,
+        senderId: currentUser.uid,
+        senderName: currentUser.displayName || 'User',
+        createdAt: serverTimestamp()
+      });
+
+      await setDoc(doc(db, "conversations", activeConversationId), {
+        updatedAt: serverTimestamp(),
+        lastMessage: messageText
+      }, { merge: true });
+
+      setChatInput('');
+    } catch (error) {
+      console.error("Error sending message: ", error);
+      alert("Message failed to send.");
+    }
+  };
+
+  const handleCloseModal = () => {
+    setModalView(null);
+    setActiveConversationId(null);
+    setActiveChatJob(null);
+    setChatMessages([]);
+    setChatInput('');
   };
 
   // --- 4. JSX (THE UI) ---
@@ -165,7 +282,7 @@ function App() {
                   <p><small>Posted by: {job.employer}</small></p>
                   
                   <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                    <button className="btn-secondary">Message Lister</button>
+                    <button className="btn-secondary" onClick={() => handleOpenChat(job)}>Message Lister</button>
                     
                     {/* Admin/Owner Conditional Delete Button */}
                     {(isAdmin || (currentUser && currentUser.uid === job.ownerId)) && (
@@ -194,8 +311,8 @@ function App() {
       {/* MODAL SYSTEM */}
       {modalView && (
         <div className="modal">
-          <div className="modal-content" style={{textAlign: 'center'}}>
-            <span className="close" onClick={() => setModalView(null)}>&times;</span>
+          <div className={`modal-content ${modalView === 'chat' ? 'chat-modal-content' : ''}`} style={modalView === 'chat' ? {} : {textAlign: 'center'}}>
+            <span className="close" onClick={handleCloseModal}>&times;</span>
             
             {modalView === 'login' && (
               <div className="login-modal">
@@ -220,6 +337,42 @@ function App() {
                 <input name="jPrice" type="number" placeholder="Budget ($)" required />
                 <button type="submit" className="btn-primary">Post Now</button>
               </form>
+            )}
+
+            {modalView === 'chat' && activeChatJob && (
+              <div className="chat-modal">
+                <h2>Chat with {activeChatJob.employer}</h2>
+                <p className="chat-context">About: {activeChatJob.title}</p>
+
+                <div className="chat-thread">
+                  {chatMessages.length === 0 ? (
+                    <p className="chat-empty">No messages yet. Start the conversation.</p>
+                  ) : (
+                    chatMessages.map((message) => {
+                      const isCurrentUserSender = currentUser && message.senderId === currentUser.uid;
+                      return (
+                        <div
+                          key={message.id}
+                          className={`chat-bubble ${isCurrentUserSender ? 'sent' : 'received'}`}
+                        >
+                          <p>{message.text}</p>
+                          <small>{isCurrentUserSender ? 'You' : message.senderName || 'Lister'}</small>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                <form className="chat-input-row" onSubmit={handleSendMessage}>
+                  <input
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Type your message..."
+                    required
+                  />
+                  <button type="submit" className="btn-primary">Send</button>
+                </form>
+              </div>
             )}
           </div>
         </div>
