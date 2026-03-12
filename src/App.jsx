@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import './App.css';
 // --- Firebase & Firestore Imports ---
 import { db, auth, googleProvider } from './firebase'; 
-import { collection, addDoc, getDocs, query, orderBy, deleteDoc, doc, getDoc, setDoc, onSnapshot, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, getDocs, query, orderBy, deleteDoc, doc, setDoc, onSnapshot, serverTimestamp, where } from "firebase/firestore";
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 
 // 1. Define your Admin List here (Replace with your actual email)
@@ -17,10 +17,10 @@ function App() {
   // --- 1. STATE MANAGEMENT ---
   const [currentUser, setCurrentUser] = useState(null);
   const [jobs, setJobs] = useState([]); 
+  const [conversations, setConversations] = useState([]);
   const [view, setView] = useState('home'); 
   const [modalView, setModalView] = useState(null); 
   const [activeConversationId, setActiveConversationId] = useState(null);
-  const [activeChatJob, setActiveChatJob] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
 
@@ -36,6 +36,9 @@ function App() {
         setCurrentUser(user);
       } else {
         setCurrentUser(null);
+        setConversations([]);
+        setActiveConversationId(null);
+        setChatMessages([]);
       }
     });
     return () => unsubscribe(); // Cleanup listener
@@ -62,7 +65,47 @@ function App() {
   }, [view]);
 
   useEffect(() => {
-    if (modalView !== 'chat' || !activeConversationId) {
+    if (!currentUser) {
+      return;
+    }
+
+    const conversationsQuery = query(
+      collection(db, "conversations"),
+      where("participants", "array-contains", currentUser.uid)
+    );
+
+    const unsubscribe = onSnapshot(conversationsQuery, (snapshot) => {
+      const conversationList = snapshot.docs
+        .map((conversationDoc) => ({
+          id: conversationDoc.id,
+          ...conversationDoc.data()
+        }))
+        .sort((firstConversation, secondConversation) => {
+          const firstTimestamp = firstConversation.updatedAt || firstConversation.createdAt;
+          const secondTimestamp = secondConversation.updatedAt || secondConversation.createdAt;
+          const firstMillis = firstTimestamp?.toMillis ? firstTimestamp.toMillis() : 0;
+          const secondMillis = secondTimestamp?.toMillis ? secondTimestamp.toMillis() : 0;
+          return secondMillis - firstMillis;
+        });
+
+      setConversations(conversationList);
+      setActiveConversationId((previousConversationId) => {
+        if (previousConversationId && conversationList.some((conversation) => conversation.id === previousConversationId)) {
+          return previousConversationId;
+        }
+
+        return conversationList[0]?.id || null;
+      });
+    }, (error) => {
+      console.error("Error loading conversations: ", error);
+    });
+
+    return () => unsubscribe();
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!activeConversationId) {
+      setChatMessages([]);
       return;
     }
 
@@ -82,9 +125,41 @@ function App() {
     });
 
     return () => unsubscribe();
-  }, [modalView, activeConversationId]);
+  }, [activeConversationId]);
 
   // --- 3. LOGIC HANDLERS ---
+  const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) || null;
+
+  const getOtherParticipantId = (conversation) => {
+    if (!currentUser || !conversation?.participants) {
+      return null;
+    }
+
+    return conversation.participants.find((participantId) => participantId !== currentUser.uid) || null;
+  };
+
+  const getConversationName = (conversation) => {
+    const otherParticipantId = getOtherParticipantId(conversation);
+
+    if (otherParticipantId && conversation?.participantNames?.[otherParticipantId]) {
+      return conversation.participantNames[otherParticipantId];
+    }
+
+    return conversation?.jobTitle || 'Conversation';
+  };
+
+  const formatConversationTimestamp = (timestamp) => {
+    if (!timestamp?.toDate) {
+      return '';
+    }
+
+    return timestamp.toDate().toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  };
   
   const handleGoogleLogin = async () => {
     try {
@@ -100,6 +175,8 @@ function App() {
     try {
       await signOut(auth);
       setView('home');
+      setActiveConversationId(null);
+      setChatMessages([]);
     } catch (error) {
       console.error("Logout Error: ", error);
     }
@@ -152,22 +229,18 @@ function App() {
 
   const ensureConversationExists = async (conversationId, job) => {
     const conversationRef = doc(db, "conversations", conversationId);
-    const existingConversation = await getDoc(conversationRef);
-
-    if (!existingConversation.exists()) {
-      await setDoc(conversationRef, {
-        jobId: job.id,
-        jobTitle: job.title,
-        participants: [currentUser.uid, job.ownerId],
-        participantNames: {
-          [currentUser.uid]: currentUser.displayName || 'User',
-          [job.ownerId]: job.employer || 'Lister'
-        },
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        lastMessage: ''
-      });
-    }
+    await setDoc(conversationRef, {
+      jobId: job.id,
+      jobTitle: job.title,
+      participants: [currentUser.uid, job.ownerId],
+      participantNames: {
+        [currentUser.uid]: currentUser.displayName || 'User',
+        [job.ownerId]: job.employer || 'Lister'
+      },
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      lastMessage: ''
+    }, { merge: true });
   };
 
   const handleOpenChat = async (job) => {
@@ -189,10 +262,10 @@ function App() {
     try {
       const conversationId = getConversationId(job.id, currentUser.uid, job.ownerId);
       await ensureConversationExists(conversationId, job);
-      setActiveChatJob(job);
       setActiveConversationId(conversationId);
       setChatInput('');
-      setModalView('chat');
+      setModalView(null);
+      setView('chats');
     } catch (error) {
       console.error("Error opening chat: ", error);
       alert("Could not open chat. Check Firestore rules for conversations/messages.");
@@ -229,10 +302,6 @@ function App() {
 
   const handleCloseModal = () => {
     setModalView(null);
-    setActiveConversationId(null);
-    setActiveChatJob(null);
-    setChatMessages([]);
-    setChatInput('');
   };
 
   // --- 4. JSX (THE UI) ---
@@ -243,6 +312,14 @@ function App() {
           <div className="logo" onClick={() => setView('home')}>Hustle</div>
           <ul className="nav-links">
             <li><button onClick={() => setView('listings')} className="link-btn">Browse Jobs</button></li>
+            <li>
+              <button
+                onClick={() => currentUser ? setView('chats') : setModalView('login')}
+                className="link-btn"
+              >
+                Chats
+              </button>
+            </li>
             {currentUser ? (
               <>
                 <li><span>Hi, {currentUser.displayName}</span></li>
@@ -261,6 +338,97 @@ function App() {
             <h1>The simple way to get <span className="highlight">things done.</span></h1>
             <p>A marketplace for local help—from lawn care to tree trimming.</p>
             <button className="btn-primary" onClick={() => setView('listings')}>Search Services</button>
+          </section>
+        ) : view === 'chats' ? (
+          <section className="chats-page">
+            {!currentUser ? (
+              <div className="chats-empty-state">
+                <h1>Your chats live here</h1>
+                <p>Sign in to message listers and keep every job conversation in one place.</p>
+                <button className="btn-primary" onClick={() => setModalView('login')}>Sign In to View Chats</button>
+              </div>
+            ) : (
+              <div className="chats-shell">
+                <aside className="conversations-panel">
+                  <div className="panel-copy">
+                    <h1>Chats</h1>
+                    <p>Every conversation tied to a job listing appears here for both users.</p>
+                  </div>
+
+                  <div className="conversation-list">
+                    {conversations.length === 0 ? (
+                      <div className="conversation-list-empty">
+                        <p>No chats yet.</p>
+                        <span>Open a listing and click Message Lister to start one.</span>
+                      </div>
+                    ) : (
+                      conversations.map((conversation) => (
+                        <button
+                          key={conversation.id}
+                          type="button"
+                          className={`conversation-card ${activeConversationId === conversation.id ? 'active' : ''}`}
+                          onClick={() => setActiveConversationId(conversation.id)}
+                        >
+                          <div className="conversation-card-top">
+                            <strong>{getConversationName(conversation)}</strong>
+                            <span>{formatConversationTimestamp(conversation.updatedAt || conversation.createdAt)}</span>
+                          </div>
+                          <p>{conversation.jobTitle || 'Job opportunity'}</p>
+                          <small>{conversation.lastMessage || 'No messages yet. Start the conversation.'}</small>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </aside>
+
+                <section className="chat-panel">
+                  {activeConversation ? (
+                    <>
+                      <div className="chat-panel-header">
+                        <div>
+                          <h2>{getConversationName(activeConversation)}</h2>
+                          <p>About: {activeConversation.jobTitle || 'Job opportunity'}</p>
+                        </div>
+                      </div>
+
+                      <div className="chat-thread chat-page-thread">
+                        {chatMessages.length === 0 ? (
+                          <p className="chat-empty">No messages yet. Start the conversation.</p>
+                        ) : (
+                          chatMessages.map((message) => {
+                            const isCurrentUserSender = currentUser && message.senderId === currentUser.uid;
+                            return (
+                              <div
+                                key={message.id}
+                                className={`chat-bubble ${isCurrentUserSender ? 'sent' : 'received'}`}
+                              >
+                                <p>{message.text}</p>
+                                <small>{isCurrentUserSender ? 'You' : message.senderName || 'Lister'}</small>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      <form className="chat-input-row" onSubmit={handleSendMessage}>
+                        <input
+                          value={chatInput}
+                          onChange={(e) => setChatInput(e.target.value)}
+                          placeholder="Type your message..."
+                          required
+                        />
+                        <button type="submit" className="btn-primary">Send</button>
+                      </form>
+                    </>
+                  ) : (
+                    <div className="chat-panel-empty">
+                      <h2>Select a chat</h2>
+                      <p>Choose a conversation on the left, or start one from a job listing.</p>
+                    </div>
+                  )}
+                </section>
+              </div>
+            )}
           </section>
         ) : (
           <section className="marketplace">
@@ -339,41 +507,6 @@ function App() {
               </form>
             )}
 
-            {modalView === 'chat' && activeChatJob && (
-              <div className="chat-modal">
-                <h2>Chat with {activeChatJob.employer}</h2>
-                <p className="chat-context">About: {activeChatJob.title}</p>
-
-                <div className="chat-thread">
-                  {chatMessages.length === 0 ? (
-                    <p className="chat-empty">No messages yet. Start the conversation.</p>
-                  ) : (
-                    chatMessages.map((message) => {
-                      const isCurrentUserSender = currentUser && message.senderId === currentUser.uid;
-                      return (
-                        <div
-                          key={message.id}
-                          className={`chat-bubble ${isCurrentUserSender ? 'sent' : 'received'}`}
-                        >
-                          <p>{message.text}</p>
-                          <small>{isCurrentUserSender ? 'You' : message.senderName || 'Lister'}</small>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-
-                <form className="chat-input-row" onSubmit={handleSendMessage}>
-                  <input
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Type your message..."
-                    required
-                  />
-                  <button type="submit" className="btn-primary">Send</button>
-                </form>
-              </div>
-            )}
           </div>
         </div>
       )}

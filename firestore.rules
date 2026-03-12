@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.uid in [
+        'z3zTXliXD4WIIVoot9HrDukdn753',
+        'JA1SDF3wZNckLZcKXKlOL5QgyA03',
+        '81jfHeqysMfDqZolIXkqIw3zaiv2',
+        'JsaLhA3sHUcUMTeYg9WNLRYmYaD2'
+      ];
+    }
+
+    function isConversationParticipant(data) {
+      return isSignedIn()
+        && data.participants is list
+        && request.auth.uid in data.participants;
+    }
+
+    match /jobs/{jobId} {
+      allow read: if true;
+
+      allow create: if isSignedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.description is string
+        && request.resource.data.employer is string
+        && request.resource.data.price is number;
+
+      allow update: if isSignedIn()
+        && resource.data.ownerId == request.auth.uid;
+
+      allow delete: if isAdmin()
+        || (isSignedIn() && resource.data.ownerId == request.auth.uid);
+    }
+
+    match /conversations/{conversationId} {
+      allow read: if isConversationParticipant(resource.data);
+
+      allow create: if isSignedIn()
+        && request.resource.data.participants is list
+        && request.resource.data.participants.size() == 2
+        && request.auth.uid in request.resource.data.participants
+        && request.resource.data.jobId is string
+        && request.resource.data.jobTitle is string
+        && request.resource.data.participantNames is map;
+
+      allow update: if isConversationParticipant(resource.data)
+        && request.resource.data.participants == resource.data.participants
+        && request.resource.data.jobId == resource.data.jobId;
+
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if isConversationParticipant(
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data
+        );
+
+        allow create: if isSignedIn()
+          && isConversationParticipant(
+            get(/databases/$(database)/documents/conversations/$(conversationId)).data
+          )
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 2000
+          && request.resource.data.senderName is string;
+
+        allow update, delete: if false;
+      }
+    }
+  }
+}

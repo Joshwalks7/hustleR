@@ -18,3 +18,13 @@ If you are developing a production application, we recommend using TypeScript wi
 ## Main Project Hosting 
 Main Firebase: https://hustle-marketplace-eaf0a.web.app/ 
 Other Amplify: https://main.d3cli9f5zsvfpo.amplifyapp.com/ 
+
+## Firebase Deploy
+
+Deploy hosting and the Firestore chat rules together:
+
+```powershell
+cd "C:\ITM 101\hustle_react\hustle"
+npm run build
+firebase deploy --only "hosting,firestore:rules"
+```
