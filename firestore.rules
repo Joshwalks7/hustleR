@@ -38,7 +38,10 @@ service cloud.firestore {
     }
 
     match /conversations/{conversationId} {
-      allow read: if isConversationParticipant(resource.data);
+      // `list` requests (queries) do not have a single `resource` document context,
+      // so keep query access at signed-in level and enforce participant access on `get`.
+      allow list: if isSignedIn();
+      allow get: if isConversationParticipant(resource.data);
 
       allow create: if isSignedIn()
         && request.resource.data.participants is list

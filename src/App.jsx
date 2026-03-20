@@ -13,6 +13,8 @@ const ADMIN_UIDS = [
   "JsaLhA3sHUcUMTeYg9WNLRYmYaD2"
 ]; // Found in the Firebase Auth tab
 
+const HUSTLE_PLAN_URL = 'https://buy.stripe.com/test_3cI14g1eu175dokdVE3Nm00';
+
 function App() {
   // --- 1. STATE MANAGEMENT ---
   const [currentUser, setCurrentUser] = useState(null);
@@ -81,8 +83,8 @@ function App() {
           ...conversationDoc.data()
         }))
         .sort((firstConversation, secondConversation) => {
-          const firstTimestamp = firstConversation.updatedAt || firstConversation.createdAt;
-          const secondTimestamp = secondConversation.updatedAt || secondConversation.createdAt;
+          const firstTimestamp = firstConversation.lastMessageAt || firstConversation.updatedAt || firstConversation.createdAt;
+          const secondTimestamp = secondConversation.lastMessageAt || secondConversation.updatedAt || secondConversation.createdAt;
           const firstMillis = firstTimestamp?.toMillis ? firstTimestamp.toMillis() : 0;
           const secondMillis = secondTimestamp?.toMillis ? secondTimestamp.toMillis() : 0;
           return secondMillis - firstMillis;
@@ -227,19 +229,33 @@ function App() {
     return `${jobId}_${sortedUids[0]}_${sortedUids[1]}`;
   };
 
+  const getDisplayName = (name, fallback) => {
+    if (typeof name === 'string' && name.trim()) {
+      return name.trim();
+    }
+
+    return fallback;
+  };
+
   const ensureConversationExists = async (conversationId, job) => {
     const conversationRef = doc(db, "conversations", conversationId);
+    const requesterId = currentUser.uid;
+    const listerId = job.ownerId;
+    const participants = [requesterId, listerId].sort();
+    const participantNames = {
+      [requesterId]: getDisplayName(currentUser.displayName, 'User'),
+      [listerId]: getDisplayName(job.employer, 'Lister')
+    };
+
+    // Upsert path: first click creates the chat, later clicks refresh participant metadata.
     await setDoc(conversationRef, {
       jobId: job.id,
-      jobTitle: job.title,
-      participants: [currentUser.uid, job.ownerId],
-      participantNames: {
-        [currentUser.uid]: currentUser.displayName || 'User',
-        [job.ownerId]: job.employer || 'Lister'
-      },
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      lastMessage: ''
+      jobTitle: getDisplayName(job.title, 'Job opportunity'),
+      listerId,
+      requesterId,
+      participants,
+      participantNames,
+      updatedAt: serverTimestamp()
     }, { merge: true });
   };
 
@@ -268,7 +284,8 @@ function App() {
       setView('chats');
     } catch (error) {
       console.error("Error opening chat: ", error);
-      alert("Could not open chat. Check Firestore rules for conversations/messages.");
+      const firebaseCode = error?.code ? ` (${error.code})` : '';
+      alert(`Could not open chat${firebaseCode}. Check Firestore rules and listing owner data.`);
     }
   };
 
@@ -290,6 +307,8 @@ function App() {
 
       await setDoc(doc(db, "conversations", activeConversationId), {
         updatedAt: serverTimestamp(),
+        lastMessageAt: serverTimestamp(),
+        lastMessageSenderId: currentUser.uid,
         lastMessage: messageText
       }, { merge: true });
 
@@ -304,6 +323,10 @@ function App() {
     setModalView(null);
   };
 
+  const handleOpenPlanCheckout = () => {
+    window.open(HUSTLE_PLAN_URL, '_blank', 'noopener,noreferrer');
+  };
+
   // --- 4. JSX (THE UI) ---
   return (
     <div className="app-container">
@@ -312,6 +335,7 @@ function App() {
           <div className="logo" onClick={() => setView('home')}>Hustle</div>
           <ul className="nav-links">
             <li><button onClick={() => setView('listings')} className="link-btn">Browse Jobs</button></li>
+            <li><button onClick={() => setView('plan')} className="link-btn">Hustle Plan</button></li>
             <li>
               <button
                 onClick={() => currentUser ? setView('chats') : setModalView('login')}
@@ -338,6 +362,32 @@ function App() {
             <h1>The simple way to get <span className="highlight">things done.</span></h1>
             <p>A marketplace for local help—from lawn care to tree trimming.</p>
             <button className="btn-primary" onClick={() => setView('listings')}>Search Services</button>
+          </section>
+        ) : view === 'plan' ? (
+          <section className="plan-page">
+            <div className="plan-card">
+              <div className="plan-badge">Hustle Pro Access</div>
+              <h1>Unlock Messaging + Posting Power</h1>
+              <p>
+                Your account can browse listings for free. The Hustle Plan unlocks action mode: message listers,
+                create listings, and fully use the marketplace.
+              </p>
+
+              <div className="plan-pricing-row">
+                <div>
+                  <strong>Early Access Plan</strong>
+                  <span>Stripe Sandbox Checkout</span>
+                </div>
+                <button className="btn-primary" type="button" onClick={handleOpenPlanCheckout}>
+                  Continue To Checkout
+                </button>
+              </div>
+
+              <div className="plan-footnote">
+                <p>This button opens your hosted Stripe test payment page in a new tab.</p>
+                <small>Access-control enforcement will be connected in a later update.</small>
+              </div>
+            </div>
           </section>
         ) : view === 'chats' ? (
           <section className="chats-page">

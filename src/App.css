@@ -396,6 +396,92 @@
   gap: 14px;
 }
 
+.plan-page {
+  min-height: calc(100vh - 92px);
+  padding: 48px 10%;
+  box-sizing: border-box;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(92, 219, 149, 0.25), transparent 42%),
+    radial-gradient(circle at 85% 10%, rgba(5, 56, 107, 0.18), transparent 40%),
+    linear-gradient(160deg, #f7fbff 0%, #f0f8f4 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.plan-card {
+  width: min(780px, 100%);
+  background: #ffffff;
+  border-radius: 24px;
+  box-shadow: 0 24px 50px rgba(15, 23, 42, 0.14);
+  padding: 36px;
+  border: 1px solid #dbe7f2;
+}
+
+.plan-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #ecfdf5;
+  color: #047857;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  margin-bottom: 16px;
+}
+
+.plan-card h1 {
+  margin: 0;
+  color: #0f172a;
+  font-size: clamp(1.9rem, 3vw, 2.6rem);
+}
+
+.plan-card > p {
+  margin: 14px 0 0;
+  color: #334155;
+  line-height: 1.6;
+  max-width: 62ch;
+}
+
+.plan-pricing-row {
+  margin-top: 26px;
+  padding: 18px;
+  border: 1px solid #c7d7e6;
+  border-radius: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  background: linear-gradient(120deg, #f8fafc 0%, #effdf4 100%);
+}
+
+.plan-pricing-row strong {
+  display: block;
+  font-size: 1.05rem;
+  color: #0f172a;
+}
+
+.plan-pricing-row span {
+  color: #475569;
+  font-size: 0.92rem;
+}
+
+.plan-footnote {
+  margin-top: 16px;
+}
+
+.plan-footnote p {
+  margin: 0;
+  color: #334155;
+}
+
+.plan-footnote small {
+  display: block;
+  margin-top: 6px;
+  color: #64748b;
+}
+
 @media (max-width: 960px) {
   .chats-shell {
     grid-template-columns: 1fr;
@@ -421,8 +507,22 @@
   }
 
   .marketplace,
-  .chats-page {
+  .chats-page,
+  .plan-page {
     padding: 24px 5%;
+  }
+
+  .plan-card {
+    padding: 24px;
+  }
+
+  .plan-pricing-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .plan-pricing-row .btn-primary {
+    width: 100%;
   }
 
   .chat-input-row {
