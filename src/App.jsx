@@ -22,6 +22,7 @@ function App() {
   const [conversations, setConversations] = useState([]);
   const [view, setView] = useState('home'); 
   const [modalView, setModalView] = useState(null); 
+  const [areaFilter, setAreaFilter] = useState('');
   const [activeConversationId, setActiveConversationId] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
@@ -130,6 +131,16 @@ function App() {
   }, [activeConversationId]);
 
   // --- 3. LOGIC HANDLERS ---
+  const normalizedAreaFilter = areaFilter.trim().toLowerCase();
+  const filteredJobs = jobs.filter((job) => {
+    if (!normalizedAreaFilter) {
+      return true;
+    }
+
+    const town = typeof job.town === 'string' ? job.town.toLowerCase() : '';
+    return town.includes(normalizedAreaFilter);
+  });
+
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) || null;
 
   const getOtherParticipantId = (conversation) => {
@@ -160,6 +171,23 @@ function App() {
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit'
+    });
+  };
+
+  const formatPreferredCompletionDate = (dateString) => {
+    if (!dateString) {
+      return 'Not specified';
+    }
+
+    const parsedDate = new Date(`${dateString}T00:00:00`);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return dateString;
+    }
+
+    return parsedDate.toLocaleDateString([], {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
     });
   };
   
@@ -208,6 +236,9 @@ function App() {
       title: e.target.jTitle.value,
       description: e.target.jDesc.value,
       price: Number(e.target.jPrice.value),
+      town: e.target.jTown.value.trim(),
+      estimatedTime: e.target.jEstimatedTime.value.trim(),
+      preferredCompletionDate: e.target.jPreferredCompletionDate.value,
       employer: currentUser.displayName, // Uses Google name
       ownerId: currentUser.uid,        // Stores unique ID for later security
       createdAt: new Date() 
@@ -484,19 +515,31 @@ function App() {
           <section className="marketplace">
             <div className="market-header">
               <h1>Marketplace Listings</h1>
-              <button 
-                onClick={() => currentUser ? setModalView('postJob') : setModalView('login')} 
-                className="btn-primary"
-              >
-                Post New Job +
-              </button>
+              <div className="market-controls">
+                <input
+                  type="text"
+                  value={areaFilter}
+                  onChange={(e) => setAreaFilter(e.target.value)}
+                  className="area-filter-input"
+                  placeholder="Filter by town/area"
+                />
+                <button 
+                  onClick={() => currentUser ? setModalView('postJob') : setModalView('login')} 
+                  className="btn-primary"
+                >
+                  Post New Job +
+                </button>
+              </div>
             </div>
             <div className="listings-grid">
-              {jobs.length === 0 ? <p>No jobs found.</p> : jobs.map((job) => (
+              {filteredJobs.length === 0 ? <p>No jobs found for that area.</p> : filteredJobs.map((job) => (
                 <div key={job.id} className="job-card">
                   <h3>{job.title}</h3>
                   <p>{job.description}</p>
                   <div className="price">${job.price}</div>
+                  <p><small>Town: {job.town || 'Not specified'}</small></p>
+                  <p><small>Estimated time: {job.estimatedTime || 'Not specified'}</small></p>
+                  <p><small>Preferred completion date: {formatPreferredCompletionDate(job.preferredCompletionDate)}</small></p>
                   <p><small>Posted by: {job.employer}</small></p>
                   
                   <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
@@ -553,6 +596,9 @@ function App() {
                 <input name="jTitle" placeholder="Job Title" required />
                 <textarea name="jDesc" placeholder="Description" required></textarea>
                 <input name="jPrice" type="number" placeholder="Budget ($)" required />
+                <input name="jTown" placeholder="Town / Area" required />
+                <input name="jEstimatedTime" placeholder="Estimated Time (e.g., 2 hours)" required />
+                <input name="jPreferredCompletionDate" type="date" required />
                 <button type="submit" className="btn-primary">Post Now</button>
               </form>
             )}
